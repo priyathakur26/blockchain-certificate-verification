@@ -6,15 +6,12 @@ import QRCode from "qrcode";
 import { QRCodeCanvas } from "qrcode.react";
 import { useSearchParams } from "react-router-dom";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESS, ABI } from "../contracts/contract";
-import { useWallet } from "../context/WalletContext";
+import {
+  CONTRACT_ADDRESS,
+  ABI,
+} from "../contracts/contract";
 
 export default function Verify() {
-  const {
-    walletAddress,
-    connecting,
-    connect,
-  } = useWallet();
 
   const [searchParams] = useSearchParams();
 
@@ -22,7 +19,9 @@ export default function Verify() {
   // FORM
   // =====================================
 
-  const [rollNumber, setRollNumber] = useState("");
+  const [rollNumber, setRollNumber] =
+    useState("");
+
   const [certificateHash, setCertificateHash] =
     useState("");
 
@@ -47,36 +46,57 @@ export default function Verify() {
     useState("");
 
   // =====================================
-  // READ-ONLY BLOCKCHAIN PROVIDER
+  // SEPOLIA RPC
+  // =====================================
+
+  /*
+   * IMPORTANT
+   *
+   * This provider is completely independent
+   * of MetaMask.
+   *
+   * Therefore QR verification can work on:
+   *
+   * - Android
+   * - iPhone
+   * - Laptop
+   * - Desktop
+   *
+   * without installing MetaMask.
+   */
+
+  const SEPOLIA_RPC =
+    "https://ethereum-sepolia-rpc.publicnode.com";
+
+  // =====================================
+  // CREATE PUBLIC READ-ONLY CONTRACT
   // =====================================
 
   const getReadOnlyContract = () => {
-    /*
-      IMPORTANT:
-
-      Verification uses a read-only JsonRpcProvider.
-
-      Therefore:
-      - MetaMask is NOT required
-      - User does NOT need to connect wallet
-      - QR verification can work directly
-      - verifyCertificate() is called as a view function
-      - getCertificate() is called as a view function
-
-      This URL works on your local network because
-      your laptop is running Hardhat on port 8545.
-    */
-
-    const rpcUrl = " http://127.0.0.1:8545/";
 
     const provider =
-      new ethers.JsonRpcProvider(rpcUrl);
+      new ethers.JsonRpcProvider(
+        SEPOLIA_RPC,
+        {
+          name: "sepolia",
+          chainId: 11155111,
+        },
+        {
+          staticNetwork: true,
+        }
+      );
 
-    return new ethers.Contract(
-      CONTRACT_ADDRESS,
-      ABI,
-      provider
-    );
+    const contract =
+      new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ABI,
+        provider
+      );
+
+    return {
+      provider,
+      contract,
+    };
   };
 
   // =====================================
@@ -87,18 +107,25 @@ export default function Verify() {
     roll,
     hash
   ) => {
+
     setError("");
     setCertificate(null);
     setVerified(false);
 
-    if (!roll?.trim() || !hash?.trim()) {
+    if (
+      !roll?.trim() ||
+      !hash?.trim()
+    ) {
+
       setError(
         "Please enter both Roll Number and Certificate Hash."
       );
+
       return;
     }
 
     try {
+
       setLoading(true);
 
       const cleanRollNumber =
@@ -107,15 +134,25 @@ export default function Verify() {
       const cleanHash =
         hash.trim();
 
-      // =====================================
-      // CREATE READ-ONLY CONTRACT
-      // =====================================
-
-      const readOnlyContract =
-        getReadOnlyContract();
+      console.log(
+        "================================="
+      );
 
       console.log(
-        "Using contract:",
+        "PUBLIC SEPOLIA VERIFICATION"
+      );
+
+      console.log(
+        "================================="
+      );
+
+      console.log(
+        "RPC:",
+        SEPOLIA_RPC
+      );
+
+      console.log(
+        "Contract:",
         CONTRACT_ADDRESS
       );
 
@@ -129,37 +166,83 @@ export default function Verify() {
         cleanHash
       );
 
+
       // =====================================
-      // CHECK BLOCKCHAIN CONNECTION
+      // CREATE PROVIDER + CONTRACT
       // =====================================
 
-      try {
-        await readOnlyContract.runner.provider
-          .getBlockNumber();
+      const {
+        provider,
+        contract,
+      } =
+        getReadOnlyContract();
 
-        console.log(
-          "Connected to Hardhat blockchain"
-        );
 
-      } catch (connectionError) {
-        console.error(
-          "Blockchain connection error:",
-          connectionError
-        );
+      // =====================================
+      // CHECK NETWORK
+      // =====================================
+
+      const network =
+        await provider.getNetwork();
+
+      console.log(
+        "Read-only network:",
+        network.chainId.toString()
+      );
+
+      if (
+        network.chainId.toString() !==
+        "11155111"
+      ) {
 
         setError(
-          "Unable to connect to the Hardhat blockchain. Make sure Hardhat node is running and your laptop IP address is correct."
+          "The verification service is not connected to Ethereum Sepolia."
         );
 
         return;
       }
 
+      console.log(
+        "Connected successfully to Ethereum Sepolia"
+      );
+
+
       // =====================================
-      // CHECK AUTHENTICITY
+      // CHECK CONTRACT
       // =====================================
 
+      const code =
+        await provider.getCode(
+          CONTRACT_ADDRESS
+        );
+
+      console.log(
+        "Contract bytecode exists:",
+        code !== "0x"
+      );
+
+      if (
+        code === "0x"
+      ) {
+
+        setError(
+          "No contract was found at the configured Sepolia contract address."
+        );
+
+        return;
+      }
+
+
+      // =====================================
+      // VERIFY CERTIFICATE
+      // =====================================
+
+      console.log(
+        "Checking certificate authenticity..."
+      );
+
       const isValid =
-        await readOnlyContract.verifyCertificate(
+        await contract.verifyCertificate(
           cleanRollNumber,
           cleanHash
         );
@@ -169,20 +252,31 @@ export default function Verify() {
         isValid
       );
 
+
       if (!isValid) {
+
         setError(
-          "No matching certificate was found on the blockchain. Please check the Roll Number and Certificate Hash."
+          "No matching certificate was found on the Sepolia blockchain. Please check the Roll Number and Certificate Hash."
         );
 
         return;
       }
 
+
       // =====================================
       // GET CERTIFICATE DETAILS
       // =====================================
 
+      console.log(
+        "Certificate verified."
+      );
+
+      console.log(
+        "Reading certificate details..."
+      );
+
       const data =
-        await readOnlyContract.getCertificate(
+        await contract.getCertificate(
           cleanRollNumber
         );
 
@@ -191,121 +285,210 @@ export default function Verify() {
         data
       );
 
+
+      // =====================================
+      // SAVE CERTIFICATE
+      // =====================================
+
       setCertificate({
-        studentName: data[0],
-        rollNumber: data[1],
-        course: data[2],
-        certificateHash: data[3],
-        ipfsHash: data[4],
-        issueDate: data[5],
+
+        studentName:
+          data[0],
+
+        rollNumber:
+          data[1],
+
+        course:
+          data[2],
+
+        certificateHash:
+          data[3],
+
+        ipfsHash:
+          data[4],
+
+        issueDate:
+          data[5],
+
       });
 
       setVerified(true);
 
+      console.log(
+        "================================="
+      );
+
+      console.log(
+        "CERTIFICATE VERIFIED SUCCESSFULLY"
+      );
+
+      console.log(
+        "================================="
+      );
+
+
     } catch (error) {
+
       console.error(
         "Certificate verification error:",
         error
       );
 
+      console.error(
+        "Error code:",
+        error?.code
+      );
+
+      console.error(
+        "Short message:",
+        error?.shortMessage
+      );
+
+      console.error(
+        "Reason:",
+        error?.reason
+      );
+
+
       if (
         error?.code ===
-        "NETWORK_ERROR"
+        "CALL_EXCEPTION"
       ) {
+
         setError(
-          "Unable to connect to Hardhat Local. Make sure the Hardhat node is running and your laptop IP address is correct."
+          "The Sepolia contract could not be read. Please check the contract address and certificate details."
         );
 
       } else if (
         error?.code ===
-        "CALL_EXCEPTION"
+        "BAD_DATA"
       ) {
+
         setError(
-          "The certificate could not be read from the blockchain. Please check the contract address and Hardhat network."
+          "The blockchain returned invalid data. Please check that the deployed contract ABI matches this application."
         );
 
-      } else if (error?.reason) {
-        setError(error.reason);
+      } else if (
+        error?.code ===
+        "NETWORK_ERROR"
+      ) {
 
-      } else if (error?.shortMessage) {
-        setError(error.shortMessage);
+        setError(
+          "Unable to connect to the Sepolia network. Please check your internet connection."
+        );
+
+      } else if (
+        error?.reason
+      ) {
+
+        setError(
+          error.reason
+        );
+
+      } else if (
+        error?.shortMessage
+      ) {
+
+        setError(
+          error.shortMessage
+        );
 
       } else {
+
         setError(
-          "Unable to verify certificate. Please check that Hardhat Local is running and the correct contract is connected."
+          "Unable to verify the certificate. Please try again."
         );
+
       }
 
     } finally {
+
       setLoading(false);
+
     }
+
   };
+
 
   // =====================================
   // MANUAL VERIFY
   // =====================================
 
   const handleVerify = async (e) => {
+
     e.preventDefault();
 
     await verifyCertificate(
       rollNumber,
       certificateHash
     );
+
   };
+
 
   // =====================================
   // LOAD QR PARAMETERS
   // =====================================
 
   useEffect(() => {
+
     const urlRollNumber =
-      searchParams.get("rollNumber");
+      searchParams.get(
+        "rollNumber"
+      );
 
     const urlCertificateHash =
-      searchParams.get("certificateHash");
+      searchParams.get(
+        "certificateHash"
+      );
+
 
     if (
       urlRollNumber &&
       urlCertificateHash
     ) {
-      setRollNumber(urlRollNumber);
-      setCertificateHash(urlCertificateHash);
+
+      const decodedRoll =
+        urlRollNumber.trim();
+
+      const decodedHash =
+        urlCertificateHash.trim();
+
+      setRollNumber(
+        decodedRoll
+      );
+
+      setCertificateHash(
+        decodedHash
+      );
+
+
+      /*
+       * Automatically verify.
+       *
+       * NO WALLET.
+       * NO METAMASK.
+       * NO WALLET CONTEXT.
+       */
 
       verifyCertificate(
-        urlRollNumber,
-        urlCertificateHash
+        decodedRoll,
+        decodedHash
       );
+
     }
+
   }, [searchParams]);
 
-  // =====================================
-  // AUTO VERIFY QR
-  // =====================================
-
-  useEffect(() => {
-    const urlRollNumber =
-      searchParams.get("rollNumber");
-
-    const urlCertificateHash =
-      searchParams.get("certificateHash");
-
-    if (
-      urlRollNumber &&
-      urlCertificateHash
-    ) {
-      verifyCertificate(
-        urlRollNumber,
-        urlCertificateHash
-      );
-    }
-  }, [searchParams]);
 
   // =====================================
   // FORMAT DATE
   // =====================================
 
-  const formatDate = (timestamp) => {
+  const formatDate = (
+    timestamp
+  ) => {
+
     if (!timestamp) {
       return "N/A";
     }
@@ -313,28 +496,38 @@ export default function Verify() {
     return new Date(
       Number(timestamp) * 1000
     ).toLocaleString();
+
   };
+
 
   // =====================================
   // VERIFICATION URL
   // =====================================
 
   const getVerificationURL = () => {
+
     if (!certificate) {
       return "";
     }
 
     /*
-      IMPORTANT:
-
-      Use the laptop's LAN IP instead of
-      localhost so the QR code can be opened
-      from another device on the same Wi-Fi.
-    */
+     * IMPORTANT:
+     *
+     * This remains your laptop's LAN address.
+     *
+     * Example:
+     *
+     * http://192.168.1.5:5173/verify
+     *
+     * The phone only needs to be on the
+     * same Wi-Fi network to open the website.
+     *
+     * Blockchain verification itself uses
+     * PUBLIC SEPOLIA RPC.
+     */
 
     const baseURL =
-      `${window.location.protocol}//` +
-      `${window.location.hostname}:5173`;
+      `${window.location.protocol}//${window.location.host}`;
 
     return (
       `${baseURL}/verify` +
@@ -345,19 +538,24 @@ export default function Verify() {
         certificate.certificateHash
       )}`
     );
+
   };
+
 
   // =====================================
   // DOWNLOAD PDF
   // =====================================
 
   const downloadCertificate = async () => {
+
     if (!certificate) {
       return;
     }
 
     try {
-      const doc = new jsPDF();
+
+      const doc =
+        new jsPDF();
 
       const qrCode =
         await QRCode.toDataURL(
@@ -369,7 +567,10 @@ export default function Verify() {
           }
         );
 
+
+      // =====================================
       // BORDER
+      // =====================================
 
       doc.setDrawColor(
         30,
@@ -377,7 +578,9 @@ export default function Verify() {
         175
       );
 
-      doc.setLineWidth(1.5);
+      doc.setLineWidth(
+        1.5
+      );
 
       doc.rect(
         10,
@@ -386,14 +589,19 @@ export default function Verify() {
         277
       );
 
+
+      // =====================================
       // HEADER
+      // =====================================
 
       doc.setFont(
         "helvetica",
         "bold"
       );
 
-      doc.setFontSize(24);
+      doc.setFontSize(
+        24
+      );
 
       doc.text(
         "DIGITAL CERTIFICATE",
@@ -404,12 +612,15 @@ export default function Verify() {
         }
       );
 
+
       doc.setFont(
         "helvetica",
         "normal"
       );
 
-      doc.setFontSize(11);
+      doc.setFontSize(
+        11
+      );
 
       doc.text(
         "Blockchain Certificate Verification System",
@@ -420,7 +631,10 @@ export default function Verify() {
         }
       );
 
+
+      // =====================================
       // DIVIDER
+      // =====================================
 
       doc.line(
         25,
@@ -429,17 +643,22 @@ export default function Verify() {
         48
       );
 
+
+      // =====================================
       // VERIFIED STATUS
+      // =====================================
 
       doc.setFont(
         "helvetica",
         "bold"
       );
 
-      doc.setFontSize(18);
+      doc.setFontSize(
+        18
+      );
 
       doc.text(
-        "✓ BLOCKCHAIN VERIFIED",
+        "BLOCKCHAIN VERIFIED",
         105,
         63,
         {
@@ -447,12 +666,15 @@ export default function Verify() {
         }
       );
 
+
       doc.setFont(
         "helvetica",
         "normal"
       );
 
-      doc.setFontSize(10);
+      doc.setFontSize(
+        10
+      );
 
       doc.text(
         "This certificate matches the record stored on the blockchain.",
@@ -463,14 +685,19 @@ export default function Verify() {
         }
       );
 
+
+      // =====================================
       // CERTIFICATE INFORMATION
+      // =====================================
 
       doc.setFont(
         "helvetica",
         "bold"
       );
 
-      doc.setFontSize(14);
+      doc.setFontSize(
+        14
+      );
 
       doc.text(
         "Certificate Information",
@@ -478,12 +705,15 @@ export default function Verify() {
         90
       );
 
+
       doc.setFont(
         "helvetica",
         "normal"
       );
 
-      doc.setFontSize(11);
+      doc.setFontSize(
+        11
+      );
 
       doc.text(
         `Student Name: ${certificate.studentName}`,
@@ -511,7 +741,10 @@ export default function Verify() {
         143
       );
 
+
+      // =====================================
       // HASH
+      // =====================================
 
       doc.setFont(
         "helvetica",
@@ -524,6 +757,7 @@ export default function Verify() {
         160
       );
 
+
       doc.setFont(
         "helvetica",
         "normal"
@@ -534,6 +768,7 @@ export default function Verify() {
         25,
         169
       );
+
 
       doc.setFont(
         "helvetica",
@@ -546,6 +781,7 @@ export default function Verify() {
         183
       );
 
+
       doc.setFont(
         "helvetica",
         "normal"
@@ -553,14 +789,18 @@ export default function Verify() {
 
       doc.text(
         certificate.ipfsHash ||
-          "N/A",
+        "N/A",
         25,
         192
       );
 
+
+      // =====================================
       // QR CODE
+      // =====================================
 
       if (qrCode) {
+
         doc.addImage(
           qrCode,
           "PNG",
@@ -569,9 +809,13 @@ export default function Verify() {
           60,
           60
         );
+
       }
 
-      doc.setFontSize(10);
+
+      doc.setFontSize(
+        10
+      );
 
       doc.text(
         "Scan the QR code to verify this certificate.",
@@ -582,11 +826,14 @@ export default function Verify() {
         }
       );
 
+
       doc.save(
         `Certificate-${certificate.rollNumber}.pdf`
       );
 
+
     } catch (error) {
+
       console.error(
         "PDF generation failed:",
         error
@@ -595,34 +842,48 @@ export default function Verify() {
       setError(
         "Unable to generate the certificate PDF."
       );
+
     }
+
   };
+
 
   // =====================================
   // PRINT
   // =====================================
 
   const printCertificate = () => {
+
     window.print();
+
   };
+
 
   // =====================================
   // CLEAR RESULT
   // =====================================
 
   const clearResult = () => {
+
     setCertificate(null);
+
     setVerified(false);
+
     setError("");
+
     setRollNumber("");
+
     setCertificateHash("");
+
   };
+
 
   // =====================================
   // UI
   // =====================================
 
   return (
+
     <div className="min-h-screen bg-slate-100 py-12 px-4">
 
       {/* HEADER */}
@@ -645,6 +906,7 @@ export default function Verify() {
 
       </div>
 
+
       <div className="max-w-6xl mx-auto">
 
         {/* =====================================
@@ -655,74 +917,32 @@ export default function Verify() {
 
           <div className="bg-linear-to-r from-blue-600 to-indigo-600 text-white p-8">
 
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+            <div>
 
-              <div>
+              <p className="text-blue-100 text-sm uppercase tracking-wider font-semibold">
+                Blockchain Authentication
+              </p>
 
-                <p className="text-blue-100 text-sm uppercase tracking-wider font-semibold">
-                  Blockchain Authentication
-                </p>
+              <h2 className="text-3xl font-bold mt-1">
+                Verify Certificate
+              </h2>
 
-                <h2 className="text-3xl font-bold mt-1">
-                  Verify Certificate
-                </h2>
-
-                <p className="text-blue-100 mt-2">
-                  Enter the certificate details to
-                  verify its authenticity.
-                </p>
-
-              </div>
-
-              {/* WALLET IS OPTIONAL FOR VERIFICATION */}
-
-              {walletAddress ? (
-
-                <div className="flex items-center gap-3 bg-white/10 border border-white/20 px-5 py-3 rounded-xl">
-
-                  <span className="w-3 h-3 bg-green-400 rounded-full"></span>
-
-                  <div>
-
-                    <p className="text-sm font-semibold">
-                      Wallet Connected
-                    </p>
-
-                    <p className="text-xs text-blue-100 font-mono">
-                      {walletAddress.slice(0, 6)}
-                      ...
-                      {walletAddress.slice(-4)}
-                    </p>
-
-                  </div>
-
-                </div>
-
-              ) : (
-
-                <div className="bg-white/10 border border-white/20 px-5 py-3 rounded-xl">
-
-                  <p className="text-sm font-semibold">
-                    🔎 Read-Only Verification
-                  </p>
-
-                  <p className="text-xs text-blue-100 mt-1">
-                    Wallet not required
-                  </p>
-
-                </div>
-
-              )}
+              <p className="text-blue-100 mt-2">
+                No wallet is required for certificate verification.
+              </p>
 
             </div>
 
           </div>
 
+
           <div className="p-8">
 
             {/* QR NOTICE */}
 
-            {searchParams.get("rollNumber") &&
+            {searchParams.get(
+              "rollNumber"
+            ) &&
               searchParams.get(
                 "certificateHash"
               ) && (
@@ -742,10 +962,9 @@ export default function Verify() {
                       </h3>
 
                       <p className="text-sm text-blue-700 mt-1">
-                        Certificate details were
-                        loaded from the QR code.
-                        Verification is being
-                        performed automatically.
+                        Certificate details were loaded
+                        from the QR code. Verification is
+                        being performed automatically.
                       </p>
 
                     </div>
@@ -753,7 +972,9 @@ export default function Verify() {
                   </div>
 
                 </div>
+
               )}
+
 
             <form
               onSubmit={handleVerify}
@@ -782,6 +1003,7 @@ export default function Verify() {
 
               </div>
 
+
               {/* CERTIFICATE HASH */}
 
               <div>
@@ -804,6 +1026,7 @@ export default function Verify() {
 
               </div>
 
+
               {/* BUTTON */}
 
               <div className="md:col-span-2">
@@ -823,6 +1046,7 @@ export default function Verify() {
               </div>
 
             </form>
+
 
             {/* ERROR */}
 
@@ -858,6 +1082,7 @@ export default function Verify() {
 
         </div>
 
+
         {/* =====================================
             VERIFIED CERTIFICATE
         ===================================== */}
@@ -890,6 +1115,7 @@ export default function Verify() {
 
               </div>
 
+
               {/* BODY */}
 
               <div className="p-8 md:p-10">
@@ -907,6 +1133,7 @@ export default function Verify() {
                   <div className="w-24 h-1 bg-blue-600 mx-auto mt-4 rounded-full"></div>
 
                 </div>
+
 
                 {/* STUDENT */}
 
@@ -930,6 +1157,7 @@ export default function Verify() {
 
                 </div>
 
+
                 {/* BASIC INFORMATION */}
 
                 <div className="grid md:grid-cols-2 gap-5">
@@ -945,6 +1173,7 @@ export default function Verify() {
                     </p>
 
                   </div>
+
 
                   <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
 
@@ -962,6 +1191,7 @@ export default function Verify() {
 
                 </div>
 
+
                 {/* HASHES */}
 
                 <div className="mt-6 space-y-4">
@@ -978,6 +1208,7 @@ export default function Verify() {
 
                   </div>
 
+
                   <div className="border border-slate-200 rounded-2xl p-5">
 
                     <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
@@ -992,6 +1223,7 @@ export default function Verify() {
                   </div>
 
                 </div>
+
 
                 {/* QR */}
 
@@ -1014,6 +1246,7 @@ export default function Verify() {
                     verify this certificate.
                   </p>
 
+
                   <div className="mt-6 flex justify-center">
 
                     <div className="bg-white p-4 rounded-2xl shadow-md">
@@ -1030,11 +1263,13 @@ export default function Verify() {
 
                   </div>
 
+
                   <p className="text-xs text-slate-400 mt-4 break-all">
                     {getVerificationURL()}
                   </p>
 
                 </div>
+
 
                 {/* BLOCKCHAIN */}
 
@@ -1045,6 +1280,7 @@ export default function Verify() {
                     <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-2xl">
                       ⛓️
                     </div>
+
 
                     <div className="flex-1">
 
@@ -1058,6 +1294,7 @@ export default function Verify() {
                         blockchain record.
                       </p>
 
+
                       <div className="mt-5 grid md:grid-cols-2 gap-4">
 
                         <div className="bg-white rounded-xl p-4">
@@ -1067,10 +1304,11 @@ export default function Verify() {
                           </p>
 
                           <p className="font-bold text-slate-800 mt-1">
-                            Hardhat Local
+                            Ethereum Sepolia
                           </p>
 
                         </div>
+
 
                         <div className="bg-white rounded-xl p-4">
 
@@ -1092,6 +1330,7 @@ export default function Verify() {
 
                 </div>
 
+
                 {/* ACTIONS */}
 
                 <div className="mt-8 grid md:grid-cols-3 gap-4">
@@ -1103,6 +1342,7 @@ export default function Verify() {
                     🖨️ Print Certificate
                   </button>
 
+
                   <button
                     onClick={
                       downloadCertificate
@@ -1111,6 +1351,7 @@ export default function Verify() {
                   >
                     📄 Download PDF
                   </button>
+
 
                   <button
                     onClick={clearResult}
@@ -1124,10 +1365,13 @@ export default function Verify() {
               </div>
 
             </div>
+
           )}
 
       </div>
 
     </div>
+
   );
+
 }

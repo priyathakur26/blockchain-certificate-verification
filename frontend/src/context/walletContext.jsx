@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useContext,
@@ -5,12 +6,20 @@ import {
   useState,
 } from "react";
 import { ethers } from "ethers";
+
 import {
   CONTRACT_ADDRESS,
   ABI,
 } from "../contracts/contract";
 
 const WalletContext = createContext(null);
+
+// =====================================
+// SEPOLIA PUBLIC RPC
+// =====================================
+
+const SEPOLIA_RPC =
+  "https://ethereum-sepolia-rpc.publicnode.com";
 
 export function WalletProvider({ children }) {
 
@@ -27,11 +36,10 @@ export function WalletProvider({ children }) {
   const [signer, setSigner] =
     useState(null);
 
-  // MetaMask contract
   const [contract, setContract] =
     useState(null);
 
-  // Read-only blockchain contract
+  // Read-only Sepolia contract
   const [readOnlyContract, setReadOnlyContract] =
     useState(null);
 
@@ -40,7 +48,7 @@ export function WalletProvider({ children }) {
 
 
   // =====================================
-  // CREATE READ-ONLY CONTRACT
+  // CREATE READ-ONLY SEPOLIA CONTRACT
   // =====================================
 
   useEffect(() => {
@@ -49,19 +57,36 @@ export function WalletProvider({ children }) {
 
       try {
 
-        /*
-         * IMPORTANT
-         *
-         * This provider connects directly to
-         * the Hardhat Local RPC.
-         *
-         * No MetaMask is required.
-         */
+        // IMPORTANT:
+        // This does NOT use MetaMask.
+        // This does NOT use localhost.
+        // This does NOT use laptop IP.
+        //
+        // It connects directly to Ethereum Sepolia.
 
         const rpcProvider =
           new ethers.JsonRpcProvider(
-            "http://192.168.0.100:8545"
+            SEPOLIA_RPC
           );
+
+        const network =
+          await rpcProvider.getNetwork();
+
+        console.log(
+          "Read-only network:",
+          network.chainId.toString()
+        );
+
+        if (
+          network.chainId.toString() !==
+          "11155111"
+        ) {
+
+          throw new Error(
+            "RPC is not connected to Sepolia."
+          );
+
+        }
 
         const readContract =
           new ethers.Contract(
@@ -75,18 +100,25 @@ export function WalletProvider({ children }) {
         );
 
         console.log(
-          "Read-only blockchain contract connected"
+          "Read-only Sepolia contract connected"
+        );
+
+        console.log(
+          "Contract:",
+          CONTRACT_ADDRESS
         );
 
       } catch (error) {
 
         console.error(
-          "Failed to create read-only contract:",
+          "Failed to create read-only Sepolia contract:",
           error
         );
 
         setReadOnlyContract(null);
+
       }
+
     };
 
     createReadOnlyContract();
@@ -115,6 +147,14 @@ export function WalletProvider({ children }) {
         new ethers.BrowserProvider(
           window.ethereum
         );
+
+      const network =
+        await browserProvider.getNetwork();
+
+      console.log(
+        "MetaMask Chain ID:",
+        network.chainId.toString()
+      );
 
       const currentSigner =
         await browserProvider.getSigner(
@@ -263,6 +303,7 @@ export function WalletProvider({ children }) {
           );
 
         }
+
       };
 
     checkConnection();
@@ -280,18 +321,40 @@ export function WalletProvider({ children }) {
       return;
     }
 
-    const handleAccountsChanged =
-      async (accounts) => {
+    let lastAccount = "";
 
-        console.log(
-          "MetaMask account changed:",
-          accounts
-        );
+    const checkAccount = async () => {
+
+      try {
+
+        const accounts =
+          await window.ethereum.request({
+            method:
+              "eth_accounts",
+          });
+
+        const currentAccount =
+          accounts &&
+          accounts.length > 0
+            ? accounts[0]
+            : "";
 
         if (
-          !accounts ||
-          accounts.length === 0
+          currentAccount.toLowerCase() ===
+          lastAccount.toLowerCase()
         ) {
+          return;
+        }
+
+        console.log(
+          "MetaMask account detected:",
+          currentAccount
+        );
+
+        lastAccount =
+          currentAccount;
+
+        if (!currentAccount) {
 
           setWalletAddress("");
           setProvider(null);
@@ -301,26 +364,31 @@ export function WalletProvider({ children }) {
           return;
         }
 
-        const newAccount =
-          accounts[0];
-
         await setCurrentAccount(
-          newAccount
+          currentAccount
         );
-      };
 
-    window.ethereum.on(
-      "accountsChanged",
-      handleAccountsChanged
-    );
+      } catch (error) {
 
-    return () => {
+        console.error(
+          "Account detection error:",
+          error
+        );
 
-      window.ethereum.removeListener(
-        "accountsChanged",
-        handleAccountsChanged
+      }
+
+    };
+
+    checkAccount();
+
+    const interval =
+      setInterval(
+        checkAccount,
+        1000
       );
 
+    return () => {
+      clearInterval(interval);
     };
 
   }, []);
@@ -341,7 +409,7 @@ export function WalletProvider({ children }) {
         signer,
         contract,
 
-        // Read-only blockchain
+        // Read-only Sepolia
         readOnlyContract,
 
         // Wallet connection

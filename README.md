@@ -12,7 +12,7 @@ Certificates issued by an authorized administrator are stored on the **Ethereum 
 https://blockchain-certificate-verification-m50xd8iv5-techvortex1.vercel.app/
 
 🔗 **GitHub Repository:**  
-https://github.com/priyathakur26/blockchain-certificate-verification/tree/main
+https://github.com/priyathakur26/blockchain-certificate-verification.git
 
 ---
 
